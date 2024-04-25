@@ -102,6 +102,7 @@ void display_buffer(HDC handle_device_context, struct window_buffer *b)
 		);
 }
 
+//render the current set colour over the entire supplied window buffer
 void render_colour(struct window_buffer *b)
 {
 	int bytes_per_pixel = 4;
@@ -163,7 +164,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			window_resized(hwnd);
 			render_colour(&window_buffer);
 			set_colour(0, 0, 0);
-			render_rect(&window_buffer, 100, 200, 500, 250);
+			render_rect(&window_buffer, 20, 200, 500, 250);
 			display_buffer(hdc, &window_buffer);
 			EndPaint(hwnd, &ps);
 		}
