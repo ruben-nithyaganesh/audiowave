@@ -130,10 +130,19 @@ void render_rect(struct window_buffer *b, int top, int left, int width, int heig
 {
 	int bytes_per_pixel = 4;
 	int b_width = b->width;
+	int b_height = b->height;
 	int pitch = bytes_per_pixel * b_width;
 
+	if((left+width) > b_width)
+	{
+		width = b_width - left;
+	}
+	if((top+height) > b_height)
+	{
+		height = b_height - top;
+	}
 	unsigned char *row = (unsigned char *)(b->data);
-	row += (pitch*(top)) + left;
+	row += (pitch*(b_height - top - height)) + (left * bytes_per_pixel);
 	for(int y = 0; y < height; y++)
 	{
 		unsigned char *pixel = row;
@@ -164,7 +173,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			window_resized(hwnd);
 			render_colour(&window_buffer);
 			set_colour(0, 0, 0);
-			render_rect(&window_buffer, 20, 200, 500, 250);
+			render_rect(&window_buffer, 100, 100, 300, 100);
 			display_buffer(hdc, &window_buffer);
 			EndPaint(hwnd, &ps);
 		}
