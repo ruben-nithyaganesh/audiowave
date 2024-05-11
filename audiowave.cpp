@@ -4,36 +4,24 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <dsound.h>
+#include <stdint.h>
+#include <math.h>
 
-struct rect_state 
-{
-	int x;
-	int y;
-};
+#include "audiowave.h"
+#include "render.h"
 
-struct window_buffer
-{
-  BITMAPINFO bitmap_info;
-  void* data;
-  int bytes_per_pixel;
-  int pitch;
-  int width;
-  int height;
-};
 
-struct window_dimension
-{
-	int top;
-	int left;
-	int width;
-	int height;
-};
+#define PI 3.14159265359
 
-struct rgb {
- unsigned char red;
- unsigned char green;
- unsigned char blue;
-};
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+
+static int ToneVolume = 500;
+#define DIRECT_SOUND_CREATE(name) HRESULT WINAPI name(LPCGUID pcGuidDevice, LPDIRECTSOUND *ppDS, LPUNKNOWN pUnkOuter)
+typedef DIRECT_SOUND_CREATE(direct_sound_create);
+
+
 
 static struct rgb c_state;
 static boolean running;
@@ -42,13 +30,94 @@ RECT window_rect;
 static struct window_buffer window_buffer;
 static struct window_dimension window_dim;
 static struct rect_state rect_state;
+static struct audio_state audio_state;
+static int move_speed = 10;
+static LPDIRECTSOUNDBUFFER secondary_buffer;
 
+//Sound test
+static int SamplesPerSecond = 48000;
+static int ToneHz = 256;
+static uint32 RunningSampleIndex = 0;
+static int SquareWaveCounter = 0;
+static int SquareWavePeriod = SamplesPerSecond/ToneHz;
+static int HalfSquareWavePeriod = SquareWavePeriod/2;
+static int BytesPerSample = sizeof(uint16) * 2;
+static int SecondaryBufferSize = SamplesPerSecond*BytesPerSample;
+static double dt = 1.0 / SamplesPerSecond;
 
 void set_colour(unsigned char red, unsigned char green, unsigned char blue)
 {
 	c_state.red = red;
 	c_state.blue = blue;
 	c_state.green = green;
+}
+
+void init_DirectSound(HWND Window, unsigned int SamplesPerSecond, unsigned int BufferSize) 
+{
+
+	HMODULE DSoundLibrary = LoadLibraryA("dsound.dll");
+
+	if(!DSoundLibrary)
+	{
+		OutputDebugStringA("DSoundLibrary failed");
+		return;
+	}
+
+	direct_sound_create *DirectSoundCreate = (direct_sound_create *)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
+	
+	LPDIRECTSOUND DirectSound;
+
+	if(!DirectSoundCreate || !SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
+	{
+		OutputDebugStringA("DirectSoundCreate failed\n");
+		return;
+	}
+
+	WAVEFORMATEX WaveFormat 	= {};
+	WaveFormat.wFormatTag 		= WAVE_FORMAT_PCM;
+	WaveFormat.nChannels 		= 2;
+	WaveFormat.wBitsPerSample 	= 16;
+	WaveFormat.nSamplesPerSec 	= SamplesPerSecond;
+	WaveFormat.nBlockAlign 		= (WaveFormat.nChannels*WaveFormat.wBitsPerSample) / 8;
+	WaveFormat.nAvgBytesPerSec 	= WaveFormat.nSamplesPerSec*WaveFormat.nBlockAlign;
+	WaveFormat.cbSize 			= 0;
+
+	if(!SUCCEEDED(DirectSound->SetCooperativeLevel(Window, DSSCL_PRIORITY)))
+	{
+		OutputDebugStringA("SetCooperativeLevel failed\n");
+		return;
+	}
+
+	LPDIRECTSOUNDBUFFER PrimaryBuffer;
+	DSBUFFERDESC BufferDescription 	= {};
+	BufferDescription.dwFlags 		= DSBCAPS_PRIMARYBUFFER;
+	BufferDescription.dwSize		= sizeof(BufferDescription);
+
+	if(!SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &PrimaryBuffer, 0)))
+	{
+		OutputDebugStringA("CreateSoundBuffer failed\n");
+		return;
+	}
+
+	if(!SUCCEEDED(PrimaryBuffer->SetFormat(&WaveFormat)))
+	{
+		OutputDebugStringA("SetFormat failed\n");
+		return;
+	}
+
+	OutputDebugStringA("YAY: Initialised Primary Buffer\n");
+
+	BufferDescription = {};
+	BufferDescription.dwSize		= sizeof(BufferDescription);
+	BufferDescription.dwFlags 		= 0;
+	BufferDescription.dwBufferBytes = BufferSize; BufferDescription.lpwfxFormat 	= &WaveFormat;
+
+	if(!SUCCEEDED(DirectSound->CreateSoundBuffer(&BufferDescription, &secondary_buffer, 0))) {
+		OutputDebugStringA("CreateSoundBuffer for secondary failed\n");
+		return;
+	}
+
+	OutputDebugStringA("YAY: Initialised Secondary Buffer\n");
 }
 
 void resize_buffer(struct window_buffer *wb, int width, int height)
@@ -214,19 +283,35 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				
 				if(VKCode == 'W')
 				{
-					rect_state.y -= 1;
+					rect_state.y -= move_speed;
+					if(rect_state.y < 0)
+					{
+						rect_state.y = 0;
+					}
 				}
 				else if(VKCode == 'A')
 				{
-					rect_state.x -= 1;
+					rect_state.x -= move_speed;
+					if(rect_state.x < 0)
+					{
+						rect_state.x = 0;
+					}
 				}
 				else if(VKCode == 'S')
 				{
-					rect_state.y += 1;
+					rect_state.y += move_speed;
+					if(rect_state.y + rect_state.height > window_dim.height)
+					{
+						rect_state.y = window_dim.height - rect_state.height;
+					}
 				}
 				else if(VKCode == 'D')
 				{
-					rect_state.x += 1;
+					rect_state.x += move_speed;
+					if(rect_state.x + rect_state.width > window_dim.width)
+					{
+						rect_state.x = window_dim.width - rect_state.width;
+					}
 				}
 				else if(VKCode == 'Q')
 				{
@@ -272,6 +357,78 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	return result;
 }
 
+void play_sound()
+{
+	
+	DWORD PlayCursor;
+	DWORD WriteCursor;
+	if(SUCCEEDED(secondary_buffer->GetCurrentPosition(&PlayCursor, &WriteCursor)))
+	{
+		DWORD ByteToLock = (RunningSampleIndex * BytesPerSample) % SecondaryBufferSize;
+		DWORD BytesToWrite;
+		if(ByteToLock > PlayCursor)
+		{
+			BytesToWrite = SecondaryBufferSize - ByteToLock;
+			BytesToWrite += PlayCursor;
+		}
+		else 
+		{
+			BytesToWrite = PlayCursor - ByteToLock;
+		}
+		VOID *Region1;
+		DWORD Region1Size;
+		VOID *Region2;
+		DWORD Region2Size;
+
+		if(SUCCEEDED(secondary_buffer->Lock(
+					ByteToLock,
+					BytesToWrite,
+					&Region1, &Region1Size,
+					&Region2, &Region2Size,
+					0
+		)))
+		{
+			uint16 *SampleOut = (uint16*)Region1;
+			DWORD Region1SampleCount = Region1Size / BytesPerSample;
+			for(DWORD SampleIndex = 0; SampleIndex < Region1SampleCount; SampleIndex++)
+			{
+				if(SquareWaveCounter == 0)
+				{
+					SquareWaveCounter = SquareWavePeriod;
+				}
+				uint16 SampleValue = ToneVolume * (sin(((PI * 2.0) * 261.63) * ((double)RunningSampleIndex * dt))
+															+ sin(((PI * 2.0) * 329.628) * ((double)RunningSampleIndex * dt))
+															+ sin(((PI * 2.0) * 392.0) * ((double)RunningSampleIndex * dt)));
+				*SampleOut++ = SampleValue;
+				*SampleOut++ = SampleValue;
+				RunningSampleIndex++;
+			}
+			SampleOut = (uint16*)Region2;
+			DWORD Region2SampleCount = Region2Size / BytesPerSample;
+			for(DWORD SampleIndex = 0; SampleIndex < Region2SampleCount; SampleIndex++)
+			{
+				if(SquareWaveCounter == 0)
+				{
+					SquareWaveCounter = SquareWavePeriod;
+				}
+				uint16 SampleValue = ToneVolume * (sin(((PI * 2.0) * 261.63) * ((double)RunningSampleIndex * dt))
+															+ sin(((PI * 2.0) * 329.628) * ((double)RunningSampleIndex * dt))
+															+ sin(((PI * 2.0) * 392.0) * ((double)RunningSampleIndex * dt)));
+				*SampleOut++ = SampleValue;
+				*SampleOut++ = SampleValue;
+				RunningSampleIndex++;
+			}
+		}
+
+		secondary_buffer->Unlock(Region1, Region1Size, Region2, Region2Size);
+	}
+}
+
+struct window_buffer getMainWindowBuffer()
+{
+	return window_buffer;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
 
@@ -310,8 +467,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		return -1;
 	}
 
+	audio_state.sample_rate = 48000;
+	audio_state.dt = 1.0 / (double)audio_state.sample_rate;
+	audio_state.bytes_per_sample = 2 * sizeof(uint16);
+	audio_state.freq = 256;
+	audio_state.wave_counter = 0;
+	
+
 	rect_state.x = 100;
 	rect_state.y = 100;
+	rect_state.width = 100;
+	rect_state.height = 100;
+
 	set_colour(200, 100, 200);
 	running = true;
 
@@ -323,6 +490,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 	//do the msg loop
 	MSG msg = {};
 	
+	init_DirectSound(hwnd, 48000, 48000*sizeof(uint16)*2);
+	secondary_buffer->Play(0, 0, DSBPLAY_LOOPING);
 	while(running)
 	{
 		MSG msg;
@@ -333,10 +502,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		}
 		
 		window_resized(hwnd);
-		set_colour(100, 50, 100);
+		char grayscale = 225;
+		set_colour(grayscale, grayscale, grayscale);
 		render_colour(&window_buffer);
-		set_colour(50, 100, 50);
-		render_rect(&window_buffer, rect_state.y, rect_state.x, 300, 100);
+		set_colour(178, 206, 254);
+		render_rect(&window_buffer, rect_state.y, rect_state.x, rect_state.width, rect_state.height);
+		play_sound();
+
+		render(window_buffer);
 		display_buffer(hdc, &window_buffer);
 	}
 
