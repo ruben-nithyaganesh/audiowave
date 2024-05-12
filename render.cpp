@@ -39,6 +39,9 @@ void mouse_input(int yPos, int xPos)
 	int gap = GRID_GAP;
 	mouseX = xPos;
 	mouseY = yPos;
+
+	hoveredX = -1;
+	hoveredY = -1;
 	for(int row = 0; row < rows; row++) {
 		for(int col = 0; col < cols; col++) {
 			
