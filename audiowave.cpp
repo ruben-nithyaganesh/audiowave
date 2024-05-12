@@ -7,12 +7,14 @@
 #include <dsound.h>
 #include <stdint.h>
 #include <math.h>
-
+#include <winuser.h>
 #include "audiowave.h"
 #include "render.h"
 
 
 #define PI 3.14159265359
+
+#define WIN_APP_BANNER_HEIGHT 32
 
 typedef uint16_t uint16;
 typedef uint32_t uint32;
@@ -64,7 +66,7 @@ void init_DirectSound(HWND Window, unsigned int SamplesPerSecond, unsigned int B
 	}
 
 	direct_sound_create *DirectSoundCreate = (direct_sound_create *)GetProcAddress(DSoundLibrary, "DirectSoundCreate");
-	
+
 	LPDIRECTSOUND DirectSound;
 
 	if(!DirectSoundCreate || !SUCCEEDED(DirectSoundCreate(0, &DirectSound, 0)))
@@ -149,7 +151,7 @@ void window_resized(HWND hwnd)
 	GetWindowRect(hwnd, &window_rect);
 	int w_width = window_rect.right - window_rect.left;
 	int w_height = window_rect.bottom - window_rect.top;
-	char output_msg[100];
+	//char output_msg[100];
 //	sprintf(output_msg, "width: %d\nheight: %d\n", w_width, w_height);
 //	OutputDebugStringA(output_msg);
 
@@ -299,6 +301,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				}
 				else if(VKCode == 'S')
 				{
+					select();
 					rect_state.y += move_speed;
 					if(rect_state.y + rect_state.height > window_dim.height)
 					{
@@ -321,6 +324,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				}
 				else if(VKCode == 'E')
 				{
+					
+				}
+				else if(VKCode == 'C')
+				{
+					clear();
 					
 				}
 				else if(VKCode == VK_UP)
@@ -501,13 +509,29 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 			DispatchMessage(&msg);
 		}
 		
+
+		POINT point;
+		GetCursorPos(&point);
+		
+		RECT rect;
+		GetWindowRect(hwnd, &rect);
+
+		int mouseWindowPosY = point.y - rect.top - WIN_APP_BANNER_HEIGHT;
+		int mouseWindowPosX = point.x - rect.left;
+
+		char output_msg[100];
+		sprintf(output_msg, "x: %d\ny: %d\n", mouseWindowPosX, mouseWindowPosY);
+		OutputDebugStringA(output_msg);
+
+		mouse_input(mouseWindowPosY, mouseWindowPosX);
+
 		window_resized(hwnd);
 		char grayscale = 225;
 		set_colour(grayscale, grayscale, grayscale);
 		render_colour(&window_buffer);
 		set_colour(178, 206, 254);
-		render_rect(&window_buffer, rect_state.y, rect_state.x, rect_state.width, rect_state.height);
-		play_sound();
+		//render_rect(&window_buffer, rect_state.y, rect_state.x, rect_state.width, rect_state.height);
+		//play_sound();
 
 		render(window_buffer);
 		display_buffer(hdc, &window_buffer);
